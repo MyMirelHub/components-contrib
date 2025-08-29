@@ -233,6 +233,35 @@ func TestMergeWithRequestMetadata(t *testing.T) {
 		assert.NotNil(t, mergedMeta)
 		assert.False(t, mergedMeta.EncodeBase64)
 	})
+
+	t.Run("Has merged contentType and contentEncoding metadata", func(t *testing.T) {
+		m := bindings.Metadata{}
+		m.Properties = map[string]string{
+			"bucket":          "my_bucket",
+			"projectID":       "my_project_id",
+			"contentType":     "text/plain",
+			"contentEncoding": "gzip",
+		}
+		gs := GCPStorage{logger: logger.NewLogger("test")}
+		meta, err := gs.parseMetadata(m)
+		require.NoError(t, err)
+
+		assert.Equal(t, "text/plain", meta.ContentType)
+		assert.Equal(t, "gzip", meta.ContentEncoding)
+
+		request := bindings.InvokeRequest{}
+		request.Metadata = map[string]string{
+			"contentType":     "text/csv",
+			"contentEncoding": "deflate",
+		}
+
+		mergedMeta, err := meta.mergeWithRequestMetadata(&request)
+		require.NoError(t, err)
+
+		// Request metadata should override component metadata
+		assert.Equal(t, "text/csv", mergedMeta.ContentType)
+		assert.Equal(t, "deflate", mergedMeta.ContentEncoding)
+	})
 }
 
 func TestInit(t *testing.T) {
