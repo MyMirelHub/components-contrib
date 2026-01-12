@@ -214,6 +214,28 @@ func parsePulsarMetadata(meta pubsub.Metadata) (*pulsarMetadata, error) {
 		}
 	}
 
+	// If ClientSecretPath is set, read secret from file (JSON or plain text)
+	if len(m.ClientCredentialsMetadata.ClientSecretPath) > 0 {
+		secretBytes, readErr := os.ReadFile(m.ClientCredentialsMetadata.ClientSecretPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("could not read oauth2 client secret from file %q: %w",
+				m.ClientCredentialsMetadata.ClientSecretPath, readErr)
+		}
+		content := strings.TrimSpace(string(secretBytes))
+		if strings.HasPrefix(content, "{") {
+			var secretFile struct {
+				ClientSecret string `json:"client_secret"`
+			}
+			if jsonErr := json.Unmarshal([]byte(content), &secretFile); jsonErr == nil && secretFile.ClientSecret != "" {
+				m.ClientCredentialsMetadata.ClientSecret = secretFile.ClientSecret
+			} else {
+				m.ClientCredentialsMetadata.ClientSecret = content
+			}
+		} else {
+			m.ClientCredentialsMetadata.ClientSecret = content
+		}
+	}
+
 	return &m, nil
 }
 
@@ -236,37 +258,12 @@ func (p *Pulsar) Init(ctx context.Context, metadata pubsub.Metadata) error {
 	case len(m.Token) > 0:
 		options.Authentication = pulsar.NewAuthenticationToken(m.Token)
 	case len(m.ClientCredentialsMetadata.TokenURL) > 0:
-		clientSecret := m.ClientCredentialsMetadata.ClientSecret
-		// If ClientSecretPath is set, read secret from file (JSON or plain text)
-		if len(m.ClientCredentialsMetadata.ClientSecretPath) > 0 {
-			secretBytes, readErr := os.ReadFile(m.ClientCredentialsMetadata.ClientSecretPath)
-			if readErr != nil {
-				return fmt.Errorf("could not read oauth2 client secret from file %q: %w",
-					m.ClientCredentialsMetadata.ClientSecretPath, readErr)
-			}
-			content := strings.TrimSpace(string(secretBytes))
-			// Try to parse as JSON with client_secret field
-			if strings.HasPrefix(content, "{") {
-				var secretFile struct {
-					ClientSecret string `json:"client_secret"`
-				}
-				if jsonErr := json.Unmarshal([]byte(content), &secretFile); jsonErr == nil && secretFile.ClientSecret != "" {
-					clientSecret = secretFile.ClientSecret
-				} else {
-					// If JSON parsing fails or client_secret not found, use raw content
-					clientSecret = content
-				}
-			} else {
-				// Plain text file - use as-is
-				clientSecret = content
-			}
-		}
 		credsOpts := oauth2.ClientCredentialsOptions{
 			Logger:       p.logger,
 			TokenURL:     m.ClientCredentialsMetadata.TokenURL,
 			CAPEM:        []byte(m.ClientCredentialsMetadata.TokenCAPEM),
 			ClientID:     m.ClientCredentialsMetadata.ClientID,
-			ClientSecret: clientSecret,
+			ClientSecret: m.ClientCredentialsMetadata.ClientSecret,
 			Scopes:       m.ClientCredentialsMetadata.Scopes,
 			Audiences:    m.ClientCredentialsMetadata.Audiences,
 		}
