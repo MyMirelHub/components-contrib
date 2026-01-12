@@ -895,7 +895,7 @@ func TestSanitiseURL(t *testing.T) {
 	}
 }
 
-func TestInitUsesTokenFromFileWhenClientSecretPathProvided(t *testing.T) {
+func TestInitUsesTokenSupplierWhenClientSecretPathProvided(t *testing.T) {
 	server := newOAuthTestServer(t)
 	secretPath := writeTempFile(t, "rotating-secret")
 
@@ -922,7 +922,143 @@ func TestInitUsesTokenFromFileWhenClientSecretPathProvided(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, capturedOpts.Authentication)
-	expected := pulsar.NewAuthenticationTokenFromFile(secretPath)
+	// Should use TokenSupplier, not TokenFromFile
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesTokenSupplierWithPlainTextSecretFile(t *testing.T) {
+	server := newOAuthTestServer(t)
+	secretPath := writeTempFile(t, "plain-text-secret-12345")
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2TokenURL":         server.URL,
+		"oauth2ClientID":         "client-id",
+		"oauth2ClientSecretPath": secretPath,
+		"oauth2Scopes":           "scope1",
+		"oauth2Audiences":        "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesTokenSupplierWithJSONSecretFile(t *testing.T) {
+	server := newOAuthTestServer(t)
+	secretPath := writeTempFile(t, `{"client_secret": "json-secret-from-file"}`)
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2TokenURL":         server.URL,
+		"oauth2ClientID":         "client-id",
+		"oauth2ClientSecretPath": secretPath,
+		"oauth2Scopes":           "scope1",
+		"oauth2Audiences":        "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesTokenSupplierWithJSONSecretFileMissingField(t *testing.T) {
+	server := newOAuthTestServer(t)
+	// JSON without client_secret field - should fallback to raw content
+	secretPath := writeTempFile(t, `{"client_id": "some-id", "other_field": "value"}`)
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2TokenURL":         server.URL,
+		"oauth2ClientID":         "client-id",
+		"oauth2ClientSecretPath": secretPath,
+		"oauth2Scopes":           "scope1",
+		"oauth2Audiences":        "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesTokenSupplierWithEmptySecretFile(t *testing.T) {
+	server := newOAuthTestServer(t)
+	secretPath := writeTempFile(t, "")
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2TokenURL":         server.URL,
+		"oauth2ClientID":         "client-id",
+		"oauth2ClientSecretPath": secretPath,
+		"oauth2Scopes":           "scope1",
+		"oauth2Audiences":        "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
 	assert.IsType(t, expected, capturedOpts.Authentication)
 }
 
