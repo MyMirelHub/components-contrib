@@ -17,10 +17,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +43,79 @@ type ClientCredentialsMetadata struct {
 	ClientSecretPath string   `mapstructure:"oauth2ClientSecretPath"`
 	Audiences        []string `mapstructure:"oauth2Audiences"`
 	Scopes           []string `mapstructure:"oauth2Scopes"`
+}
+
+// ResolveCredentials loads client_id and client_secret from file if ClientSecretPath is set.
+func (m *ClientCredentialsMetadata) ResolveCredentials() error {
+	if m.ClientSecretPath == "" {
+		return nil // No file path, use existing values
+	}
+
+	fileClientID, fileClientSecret, err := LoadCredentialsFromFile(m.ClientSecretPath)
+	if err != nil {
+		return fmt.Errorf("failed to load credentials from file: %w", err)
+	}
+
+	if fileClientID != "" {
+		m.ClientID = fileClientID
+	}
+	if fileClientSecret != "" {
+		m.ClientSecret = fileClientSecret
+	}
+
+	return nil
+}
+
+// ToOptions converts ClientCredentialsMetadata to ClientCredentialsOptions.
+func (m *ClientCredentialsMetadata) ToOptions(logger logger.Logger) ClientCredentialsOptions {
+	return ClientCredentialsOptions{
+		Logger:       logger,
+		TokenURL:     m.TokenURL,
+		CAPEM:        []byte(m.TokenCAPEM),
+		ClientID:     m.ClientID,
+		ClientSecret: m.ClientSecret,
+		Scopes:       m.Scopes,
+		Audiences:    m.Audiences,
+	}
+}
+
+// CredentialsFile represents a JSON credentials file.
+type CredentialsFile struct {
+	Type         string `json:"type"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	ClientEmail  string `json:"client_email"`
+	IssuerURL    string `json:"issuer_url"`
+}
+
+// LoadCredentialsFromFile reads client_id and client_secret from a JSON or plain text file.
+func LoadCredentialsFromFile(filePath string) (clientID, clientSecret string, err error) {
+	secretBytes, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		return "", "", fmt.Errorf("could not read oauth2 client secret from file %q: %w", filePath, readErr)
+	}
+
+	content := strings.TrimSpace(string(secretBytes))
+	if strings.HasPrefix(content, "{") {
+		var credentialsFile CredentialsFile
+		if jsonErr := json.Unmarshal([]byte(content), &credentialsFile); jsonErr == nil {
+			if credentialsFile.Type == "client_credentials" {
+				if credentialsFile.ClientID == "" {
+					return "", "", fmt.Errorf("client_id is required in credentials file when type is client_credentials")
+				}
+				if credentialsFile.ClientSecret == "" {
+					return "", "", fmt.Errorf("client_secret is required in credentials file when type is client_credentials")
+				}
+				return credentialsFile.ClientID, credentialsFile.ClientSecret, nil
+			} else if credentialsFile.ClientSecret != "" {
+				return credentialsFile.ClientID, credentialsFile.ClientSecret, nil
+			}
+			return "", content, nil
+		}
+		return "", content, nil
+	}
+
+	return "", content, nil
 }
 
 type ClientCredentialsOptions struct {
