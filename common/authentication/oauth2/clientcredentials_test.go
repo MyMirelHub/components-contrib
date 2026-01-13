@@ -215,6 +215,18 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 			expClientID:     "file-id",
 			expClientSecret: "file-secret",
 		},
+		"file provides credentials when metadata is empty": {
+			metadata: ClientCredentialsMetadata{
+				// ClientID and ClientSecret are empty (not set in metadata)
+			},
+			fileContent: `{
+				"type": "client_credentials",
+				"client_id": "file-only-id",
+				"client_secret": "file-only-secret"
+			}`,
+			expClientID:     "file-only-id",
+			expClientSecret: "file-only-secret",
+		},
 		"error missing client_id": {
 			fileContent: `{
 				"type": "client_credentials",

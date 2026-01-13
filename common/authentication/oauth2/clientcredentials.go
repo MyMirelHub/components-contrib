@@ -84,8 +84,6 @@ type CredentialsFile struct {
 	Type         string `json:"type"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
-	ClientEmail  string `json:"client_email"`
-	IssuerURL    string `json:"issuer_url"`
 }
 
 // LoadCredentialsFromFile reads client_id and client_secret from a JSON or plain text file.
