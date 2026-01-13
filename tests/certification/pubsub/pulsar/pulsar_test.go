@@ -1011,8 +1011,8 @@ func (p *pulsarSuite) TestOAuth2WithPlainTextCredentialsFile() {
 		Run()
 }
 
-// TestOAuth2WithJSONCredentialsFile tests OAuth2 authentication using oauth2ClientSecretPath
-// with a JSON credentials file containing type "client_credentials".
+// TestOAuth2WithJSONCredentialsFile tests OAuth2 authentication using oauth2CredentialsFile
+// with a JSON credentials file containing both client_id and client_secret.
 func (p *pulsarSuite) TestOAuth2WithJSONCredentialsFile() {
 	t := p.T()
 	consumerGroup1 := watcher.NewUnordered()

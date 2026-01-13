@@ -118,7 +118,7 @@ func Test_TokenRenewal(t *testing.T) {
 	assert.Equal(t, "new-token", tok)
 }
 
-func TestLoadCredentialsFromFile(t *testing.T) {
+func TestLoadCredentialsFromJSONFile(t *testing.T) {
 	tests := map[string]struct {
 		fileContent     string
 		expClientID     string
@@ -126,7 +126,7 @@ func TestLoadCredentialsFromFile(t *testing.T) {
 		expErr          bool
 		expErrContains  string
 	}{
-		"client_credentials JSON": {
+		"valid JSON with both fields": {
 			fileContent: `{
 				"type": "client_credentials",
 				"client_id": "test-id",
@@ -135,7 +135,7 @@ func TestLoadCredentialsFromFile(t *testing.T) {
 			expClientID:     "test-id",
 			expClientSecret: "test-secret",
 		},
-		"client_credentials missing client_id": {
+		"missing client_id": {
 			fileContent: `{
 				"type": "client_credentials",
 				"client_secret": "test-secret"
@@ -143,25 +143,23 @@ func TestLoadCredentialsFromFile(t *testing.T) {
 			expErr:         true,
 			expErrContains: "client_id is required",
 		},
-		"JSON with only client_secret": {
+		"missing client_secret": {
 			fileContent: `{
-				"client_secret": "plain-secret"
+				"type": "client_credentials",
+				"client_id": "test-id"
 			}`,
-			expClientID:     "",
-			expClientSecret: "plain-secret",
-			expErr:          false,
+			expErr:         true,
+			expErrContains: "client_secret is required",
 		},
-		"plain text file": {
-			fileContent:     "plain-text-secret",
-			expClientID:     "",
-			expClientSecret: "plain-text-secret",
-			expErr:          false,
+		"invalid JSON": {
+			fileContent:    "{ invalid json }",
+			expErr:         true,
+			expErrContains: "failed to parse JSON",
 		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			// Create temporary file
 			tmpFile, err := os.CreateTemp(t.TempDir(), "credentials-*.json")
 			require.NoError(t, err)
 			defer os.Remove(tmpFile.Name())
@@ -170,7 +168,7 @@ func TestLoadCredentialsFromFile(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tmpFile.Close())
 
-			clientID, clientSecret, err := LoadCredentialsFromFile(tmpFile.Name())
+			clientID, clientSecret, err := LoadCredentialsFromJSONFile(tmpFile.Name())
 
 			if test.expErr {
 				require.Error(t, err)
@@ -186,28 +184,28 @@ func TestLoadCredentialsFromFile(t *testing.T) {
 	}
 
 	t.Run("file not found", func(t *testing.T) {
-		_, _, err := LoadCredentialsFromFile("/nonexistent/file/path")
+		_, _, err := LoadCredentialsFromJSONFile("/nonexistent/file/path")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "could not read oauth2 client secret from file")
+		assert.Contains(t, err.Error(), "could not read oauth2 credentials from file")
 	})
 }
 
 func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 	tests := map[string]struct {
-		metadata        ClientCredentialsMetadata
-		fileContent     string
-		expClientID     string
-		expClientSecret string
-		expTokenURL     string
-		expErr          bool
-		expErrContains  string
+		metadata            ClientCredentialsMetadata
+		credentialsFileJSON string // For oauth2CredentialsFile (JSON with both client_id and client_secret)
+		plainTextSecret     string // For oauth2ClientSecretPath (plain text secret only)
+		expClientID         string
+		expClientSecret     string
+		expErr              bool
+		expErrContains      string
 	}{
-		"file overrides metadata": {
+		"oauth2CredentialsFile overrides metadata": {
 			metadata: ClientCredentialsMetadata{
 				ClientID:     "metadata-id",
 				ClientSecret: "metadata-secret",
 			},
-			fileContent: `{
+			credentialsFileJSON: `{
 				"type": "client_credentials",
 				"client_id": "file-id",
 				"client_secret": "file-secret"
@@ -215,11 +213,9 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 			expClientID:     "file-id",
 			expClientSecret: "file-secret",
 		},
-		"file provides credentials when metadata is empty": {
-			metadata: ClientCredentialsMetadata{
-				// ClientID and ClientSecret are empty (not set in metadata)
-			},
-			fileContent: `{
+		"oauth2CredentialsFile provides credentials when metadata is empty": {
+			metadata: ClientCredentialsMetadata{},
+			credentialsFileJSON: `{
 				"type": "client_credentials",
 				"client_id": "file-only-id",
 				"client_secret": "file-only-secret"
@@ -227,25 +223,73 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 			expClientID:     "file-only-id",
 			expClientSecret: "file-only-secret",
 		},
-		"error missing client_id": {
-			fileContent: `{
+		"oauth2ClientSecretPath provides plain text secret": {
+			metadata: ClientCredentialsMetadata{
+				ClientID: "metadata-id",
+			},
+			plainTextSecret: "plain-text-secret-12345",
+			expClientID:     "metadata-id",
+			expClientSecret: "plain-text-secret-12345",
+		},
+		"error missing client_id in JSON": {
+			metadata: ClientCredentialsMetadata{},
+			credentialsFileJSON: `{
 				"type": "client_credentials",
-				"client_secret": "secret-only"
+				"client_secret": "test-secret"
 			}`,
 			expErr:         true,
 			expErrContains: "client_id is required",
+		},
+		"error missing client_secret in JSON": {
+			metadata: ClientCredentialsMetadata{},
+			credentialsFileJSON: `{
+				"type": "client_credentials",
+				"client_id": "test-id"
+			}`,
+			expErr:         true,
+			expErrContains: "client_secret is required",
+		},
+		"error invalid JSON": {
+			metadata:            ClientCredentialsMetadata{},
+			credentialsFileJSON: "{ invalid json }",
+			expErr:              true,
+			expErrContains:      "failed to parse JSON",
+		},
+		"error both fields set": {
+			metadata: ClientCredentialsMetadata{},
+			credentialsFileJSON: `{
+				"type": "client_credentials",
+				"client_id": "test-id",
+				"client_secret": "test-secret"
+			}`,
+			plainTextSecret: "plain-text-secret",
+			expErr:          true,
+			expErrContains:  "mutually exclusive",
 		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			// Create temporary file if fileContent is provided
-			if test.fileContent != "" {
+			// Create JSON file for oauth2CredentialsFile if provided
+			if test.credentialsFileJSON != "" {
 				tmpFile, err := os.CreateTemp(t.TempDir(), "credentials-*.json")
 				require.NoError(t, err)
 				defer os.Remove(tmpFile.Name())
 
-				_, err = tmpFile.WriteString(test.fileContent)
+				_, err = tmpFile.WriteString(test.credentialsFileJSON)
+				require.NoError(t, err)
+				require.NoError(t, tmpFile.Close())
+
+				test.metadata.CredentialsFilePath = tmpFile.Name()
+			}
+
+			// Create plain text file for oauth2ClientSecretPath if provided
+			if test.plainTextSecret != "" {
+				tmpFile, err := os.CreateTemp(t.TempDir(), "secret-*.txt")
+				require.NoError(t, err)
+				defer os.Remove(tmpFile.Name())
+
+				_, err = tmpFile.WriteString(test.plainTextSecret)
 				require.NoError(t, err)
 				require.NoError(t, tmpFile.Close())
 
@@ -263,9 +307,6 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, test.expClientID, test.metadata.ClientID)
 				assert.Equal(t, test.expClientSecret, test.metadata.ClientSecret)
-				if test.expTokenURL != "" {
-					assert.Equal(t, test.expTokenURL, test.metadata.TokenURL)
-				}
 			}
 		})
 	}

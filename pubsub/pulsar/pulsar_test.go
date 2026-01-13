@@ -965,7 +965,11 @@ func TestInitUsesTokenSupplierWithPlainTextSecretFile(t *testing.T) {
 
 func TestInitUsesTokenSupplierWithJSONSecretFile(t *testing.T) {
 	server := newOAuthTestServer(t)
-	secretPath := writeTempFile(t, `{"client_secret": "json-secret-from-file"}`)
+	credentialsPath := writeTempFile(t, `{
+		"type": "client_credentials",
+		"client_id": "json-id-from-file",
+		"client_secret": "json-secret-from-file"
+	}`)
 
 	var capturedOpts pulsar.ClientOptions
 	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
@@ -979,12 +983,12 @@ func TestInitUsesTokenSupplierWithJSONSecretFile(t *testing.T) {
 
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
-		"host":                   "localhost:6650",
-		"oauth2TokenURL":         server.URL,
-		"oauth2ClientID":         "client-id",
-		"oauth2ClientSecretPath": secretPath,
-		"oauth2Scopes":           "scope1",
-		"oauth2Audiences":        "aud1",
+		"host":                  "localhost:6650",
+		"oauth2TokenURL":        server.URL,
+		"oauth2ClientID":        "metadata-client-id", // Should be overridden by file
+		"oauth2CredentialsFile": credentialsPath,
+		"oauth2Scopes":          "scope1",
+		"oauth2Audiences":       "aud1",
 	}
 	err := p.Init(t.Context(), md)
 
@@ -996,10 +1000,10 @@ func TestInitUsesTokenSupplierWithJSONSecretFile(t *testing.T) {
 	assert.IsType(t, expected, capturedOpts.Authentication)
 }
 
-func TestInitUsesTokenSupplierWithJSONSecretFileMissingField(t *testing.T) {
+func TestInitUsesTokenSupplierWithPlainTextSecretFileContent(t *testing.T) {
 	server := newOAuthTestServer(t)
-	// JSON without client_secret field - should fallback to raw content
-	secretPath := writeTempFile(t, `{"client_id": "some-id", "other_field": "value"}`)
+	// oauth2ClientSecretPath should only handle plain text, not JSON
+	secretPath := writeTempFile(t, "plain-text-secret-content-12345")
 
 	var capturedOpts pulsar.ClientOptions
 	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
@@ -1065,16 +1069,14 @@ func TestInitUsesTokenSupplierWithEmptySecretFile(t *testing.T) {
 
 func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 	server := newOAuthTestServer(t)
-	// Test the new format with type, client_id, client_secret, and issuer_url
+	// Test oauth2CredentialsFile with JSON containing client_id and client_secret
 	//nolint:gosec
 	credentialsJSON := `{
 		"type": "client_credentials",
 		"client_id": "d9ZyX97q1ef8Cr81WHVC4hFQ64vSlDK3",
-		"client_secret": "on1uJ...k6F6R",
-		"client_email": "1234567890-abcdefghijklmnopqrstuvwxyz@developer.gserviceaccount.com",
-		"issuer_url": "https://accounts.google.com"
+		"client_secret": "on1uJ...k6F6R"
 	}`
-	secretPath := writeTempFile(t, credentialsJSON)
+	credentialsPath := writeTempFile(t, credentialsJSON)
 
 	var capturedOpts pulsar.ClientOptions
 	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
@@ -1088,12 +1090,12 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
-		"host":                   "localhost:6650",
-		"oauth2TokenURL":         server.URL,           // Explicitly set, should not be overridden
-		"oauth2ClientID":         "metadata-client-id", // Should be overridden by file
-		"oauth2ClientSecretPath": secretPath,
-		"oauth2Scopes":           "scope1",
-		"oauth2Audiences":        "aud1",
+		"host":                  "localhost:6650",
+		"oauth2TokenURL":        server.URL,
+		"oauth2ClientID":        "metadata-client-id", // Should be overridden by file
+		"oauth2CredentialsFile": credentialsPath,
+		"oauth2Scopes":          "scope1",
+		"oauth2Audiences":       "aud1",
 	}
 	err := p.Init(t.Context(), md)
 
@@ -1108,14 +1110,47 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testing.T) {
 	server := newOAuthTestServer(t)
 	// Test that issuer_url in JSON file is ignored - TokenURL must be set explicitly
-	// This verifies that issuer_url is not used to construct token URL
 	credentialsJSON := fmt.Sprintf(`{
 		"type": "client_credentials",
 		"client_id": "test-client-id",
 		"client_secret": "test-client-secret",
 		"issuer_url": "%s"
 	}`, server.URL)
-	secretPath := writeTempFile(t, credentialsJSON)
+	credentialsPath := writeTempFile(t, credentialsJSON)
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                  "localhost:6650",
+		"oauth2TokenURL":        server.URL + "/token",
+		"oauth2CredentialsFile": credentialsPath,
+		"oauth2Scopes":          "scope1",
+		"oauth2Audiences":       "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesClientIDFromMetadataWhenFileHasOnlySecret(t *testing.T) {
+	server := newOAuthTestServer(t)
+	// Test that oauth2ClientSecretPath works with plain text (client_id comes from metadata)
+	plainTextSecret := "plain-text-secret-12345"
+	secretPath := writeTempFile(t, plainTextSecret)
 
 	var capturedOpts pulsar.ClientOptions
 	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
@@ -1130,8 +1165,9 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testi
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
 		"host":                   "localhost:6650",
-		"oauth2TokenURL":         server.URL + "/token", // TokenURL must be set explicitly
-		"oauth2ClientSecretPath": secretPath,
+		"oauth2TokenURL":         server.URL,
+		"oauth2ClientID":         "metadata-client-id", // client_id from metadata
+		"oauth2ClientSecretPath": secretPath,           // plain text secret in file
 		"oauth2Scopes":           "scope1",
 		"oauth2Audiences":        "aud1",
 	}
@@ -1145,26 +1181,6 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testi
 	assert.IsType(t, expected, capturedOpts.Authentication)
 }
 
-func TestInitFailsWhenClientCredentialsTypeMissingClientID(t *testing.T) {
-	// Test that client_credentials type requires client_id
-	//nolint:gosec
-	credentialsJSON := `{
-		"type": "client_credentials",
-		"client_secret": "test-secret"
-	}`
-	secretPath := writeTempFile(t, credentialsJSON)
-
-	md := pubsub.Metadata{}
-	md.Properties = map[string]string{
-		"host":                   "localhost:6650",
-		"oauth2ClientSecretPath": secretPath,
-	}
-	_, err := parsePulsarMetadata(md)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "client_id is required")
-}
-
 func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
 	// Test that client_credentials type requires client_secret
 	//nolint:gosec
@@ -1176,8 +1192,8 @@ func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
 
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
-		"host":                   "localhost:6650",
-		"oauth2ClientSecretPath": secretPath,
+		"host":                  "localhost:6650",
+		"oauth2CredentialsFile": secretPath,
 	}
 	_, err := parsePulsarMetadata(md)
 
