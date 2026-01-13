@@ -1149,6 +1149,7 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testi
 func TestInitUsesClientIDFromMetadataWhenFileHasOnlySecret(t *testing.T) {
 	server := newOAuthTestServer(t)
 	// Test that oauth2ClientSecretPath works with plain text (client_id comes from metadata)
+	//nolint:gosec
 	plainTextSecret := "plain-text-secret-12345"
 	secretPath := writeTempFile(t, plainTextSecret)
 

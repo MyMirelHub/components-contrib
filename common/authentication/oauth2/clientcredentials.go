@@ -49,7 +49,6 @@ type ClientCredentialsMetadata struct {
 // ResolveCredentials loads client_id and client_secret from files if configured.
 // oauth2CredentialsFile and oauth2ClientSecretPath are mutually exclusive.
 func (m *ClientCredentialsMetadata) ResolveCredentials() error {
-
 	if m.CredentialsFilePath != "" && m.ClientSecretPath != "" {
 		return errors.New("'oauth2CredentialsFile' and 'oauth2ClientSecretPath' fields are mutually exclusive")
 	}
