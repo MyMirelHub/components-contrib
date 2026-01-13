@@ -16,6 +16,7 @@ package oauth2
 import (
 	"context"
 	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -115,4 +116,167 @@ func Test_TokenRenewal(t *testing.T) {
 	tok, err := c.Token()
 	require.NoError(t, err)
 	assert.Equal(t, "new-token", tok)
+}
+
+func TestLoadCredentialsFromFile(t *testing.T) {
+	tests := map[string]struct {
+		fileContent     string
+		expClientID     string
+		expClientSecret string
+		expErr          bool
+		expErrContains  string
+	}{
+		"client_credentials JSON": {
+			fileContent: `{
+				"type": "client_credentials",
+				"client_id": "test-id",
+				"client_secret": "test-secret"
+			}`,
+			expClientID:     "test-id",
+			expClientSecret: "test-secret",
+		},
+		"client_credentials missing client_id": {
+			fileContent: `{
+				"type": "client_credentials",
+				"client_secret": "test-secret"
+			}`,
+			expErr:         true,
+			expErrContains: "client_id is required",
+		},
+		"JSON with only client_secret": {
+			fileContent: `{
+				"client_secret": "plain-secret"
+			}`,
+			expClientID:     "",
+			expClientSecret: "plain-secret",
+			expErr:          false,
+		},
+		"plain text file": {
+			fileContent:     "plain-text-secret",
+			expClientID:     "",
+			expClientSecret: "plain-text-secret",
+			expErr:          false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Create temporary file
+			tmpFile, err := os.CreateTemp(t.TempDir(), "credentials-*.json")
+			require.NoError(t, err)
+			defer os.Remove(tmpFile.Name())
+
+			_, err = tmpFile.WriteString(test.fileContent)
+			require.NoError(t, err)
+			require.NoError(t, tmpFile.Close())
+
+			clientID, clientSecret, err := LoadCredentialsFromFile(tmpFile.Name())
+
+			if test.expErr {
+				require.Error(t, err)
+				if test.expErrContains != "" {
+					assert.Contains(t, err.Error(), test.expErrContains)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, test.expClientID, clientID)
+				assert.Equal(t, test.expClientSecret, clientSecret)
+			}
+		})
+	}
+
+	t.Run("file not found", func(t *testing.T) {
+		_, _, err := LoadCredentialsFromFile("/nonexistent/file/path")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could not read oauth2 client secret from file")
+	})
+}
+
+func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
+	tests := map[string]struct {
+		metadata        ClientCredentialsMetadata
+		fileContent     string
+		expClientID     string
+		expClientSecret string
+		expTokenURL     string
+		expErr          bool
+		expErrContains  string
+	}{
+		"file overrides metadata": {
+			metadata: ClientCredentialsMetadata{
+				ClientID:     "metadata-id",
+				ClientSecret: "metadata-secret",
+			},
+			fileContent: `{
+				"type": "client_credentials",
+				"client_id": "file-id",
+				"client_secret": "file-secret"
+			}`,
+			expClientID:     "file-id",
+			expClientSecret: "file-secret",
+		},
+		"error missing client_id": {
+			fileContent: `{
+				"type": "client_credentials",
+				"client_secret": "secret-only"
+			}`,
+			expErr:         true,
+			expErrContains: "client_id is required",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Create temporary file if fileContent is provided
+			if test.fileContent != "" {
+				tmpFile, err := os.CreateTemp(t.TempDir(), "credentials-*.json")
+				require.NoError(t, err)
+				defer os.Remove(tmpFile.Name())
+
+				_, err = tmpFile.WriteString(test.fileContent)
+				require.NoError(t, err)
+				require.NoError(t, tmpFile.Close())
+
+				test.metadata.ClientSecretPath = tmpFile.Name()
+			}
+
+			err := test.metadata.ResolveCredentials()
+
+			if test.expErr {
+				require.Error(t, err)
+				if test.expErrContains != "" {
+					assert.Contains(t, err.Error(), test.expErrContains)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, test.expClientID, test.metadata.ClientID)
+				assert.Equal(t, test.expClientSecret, test.metadata.ClientSecret)
+				if test.expTokenURL != "" {
+					assert.Equal(t, test.expTokenURL, test.metadata.TokenURL)
+				}
+			}
+		})
+	}
+}
+
+func TestClientCredentialsMetadata_ToOptions(t *testing.T) {
+	logger := logger.NewLogger("test")
+	metadata := ClientCredentialsMetadata{
+		TokenURL:     "https://token.example.com",
+		TokenCAPEM:   "cert-pem-content",
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		Scopes:       []string{"scope1", "scope2"},
+		Audiences:    []string{"audience1"},
+	}
+
+	opts := metadata.ToOptions(logger)
+
+	assert.Equal(t, logger, opts.Logger)
+	assert.Equal(t, "https://token.example.com", opts.TokenURL)
+	assert.Equal(t, []byte("cert-pem-content"), opts.CAPEM)
+	assert.Equal(t, "test-client-id", opts.ClientID)
+	assert.Equal(t, "test-client-secret", opts.ClientSecret)
+	assert.Equal(t, []string{"scope1", "scope2"}, opts.Scopes)
+	assert.Equal(t, []string{"audience1"}, opts.Audiences)
 }

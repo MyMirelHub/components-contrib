@@ -14,6 +14,7 @@ limitations under the License.
 package pulsar
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1060,6 +1061,125 @@ func TestInitUsesTokenSupplierWithEmptySecretFile(t *testing.T) {
 		return "", nil
 	})
 	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
+	server := newOAuthTestServer(t)
+	// Test the new format with type, client_id, client_secret, and issuer_url
+	credentialsJSON := `{
+		"type": "client_credentials",
+		"client_id": "d9ZyX97q1ef8Cr81WHVC4hFQ64vSlDK3",
+		"client_secret": "on1uJ...k6F6R",
+		"client_email": "1234567890-abcdefghijklmnopqrstuvwxyz@developer.gserviceaccount.com",
+		"issuer_url": "https://accounts.google.com"
+	}`
+	secretPath := writeTempFile(t, credentialsJSON)
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2TokenURL":         server.URL,           // Explicitly set, should not be overridden
+		"oauth2ClientID":         "metadata-client-id", // Should be overridden by file
+		"oauth2ClientSecretPath": secretPath,
+		"oauth2Scopes":           "scope1",
+		"oauth2Audiences":        "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testing.T) {
+	server := newOAuthTestServer(t)
+	// Test that issuer_url in JSON file is ignored - TokenURL must be set explicitly
+	// This verifies that issuer_url is not used to construct token URL
+	credentialsJSON := fmt.Sprintf(`{
+		"type": "client_credentials",
+		"client_id": "test-client-id",
+		"client_secret": "test-client-secret",
+		"issuer_url": "%s"
+	}`, server.URL)
+	secretPath := writeTempFile(t, credentialsJSON)
+
+	var capturedOpts pulsar.ClientOptions
+	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
+	t.Cleanup(func() {
+		p.newClientFn = pulsar.NewClient
+	})
+	p.newClientFn = func(opts pulsar.ClientOptions) (pulsar.Client, error) {
+		capturedOpts = opts
+		return nil, nil
+	}
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2TokenURL":         server.URL + "/token", // TokenURL must be set explicitly
+		"oauth2ClientSecretPath": secretPath,
+		"oauth2Scopes":           "scope1",
+		"oauth2Audiences":        "aud1",
+	}
+	err := p.Init(t.Context(), md)
+
+	require.NoError(t, err)
+	require.NotNil(t, capturedOpts.Authentication)
+	expected := pulsar.NewAuthenticationTokenFromSupplier(func() (string, error) {
+		return "", nil
+	})
+	assert.IsType(t, expected, capturedOpts.Authentication)
+}
+
+func TestInitFailsWhenClientCredentialsTypeMissingClientID(t *testing.T) {
+	// Test that client_credentials type requires client_id
+	credentialsJSON := `{
+		"type": "client_credentials",
+		"client_secret": "test-secret"
+	}`
+	secretPath := writeTempFile(t, credentialsJSON)
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2ClientSecretPath": secretPath,
+	}
+	_, err := parsePulsarMetadata(md)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "client_id is required")
+}
+
+func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
+	// Test that client_credentials type requires client_secret
+	credentialsJSON := `{
+		"type": "client_credentials",
+		"client_id": "test-id"
+	}`
+	secretPath := writeTempFile(t, credentialsJSON)
+
+	md := pubsub.Metadata{}
+	md.Properties = map[string]string{
+		"host":                   "localhost:6650",
+		"oauth2ClientSecretPath": secretPath,
+	}
+	_, err := parsePulsarMetadata(md)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "client_secret is required")
 }
 
 func TestInitUsesTokenSupplierWhenClientSecretPathMissing(t *testing.T) {

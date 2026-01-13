@@ -19,7 +19,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -214,26 +213,9 @@ func parsePulsarMetadata(meta pubsub.Metadata) (*pulsarMetadata, error) {
 		}
 	}
 
-	// If ClientSecretPath is set, read secret from file (JSON or plain text)
-	if len(m.ClientCredentialsMetadata.ClientSecretPath) > 0 {
-		secretBytes, readErr := os.ReadFile(m.ClientCredentialsMetadata.ClientSecretPath)
-		if readErr != nil {
-			return nil, fmt.Errorf("could not read oauth2 client secret from file %q: %w",
-				m.ClientCredentialsMetadata.ClientSecretPath, readErr)
-		}
-		content := strings.TrimSpace(string(secretBytes))
-		if strings.HasPrefix(content, "{") {
-			var secretFile struct {
-				ClientSecret string `json:"client_secret"`
-			}
-			if jsonErr := json.Unmarshal([]byte(content), &secretFile); jsonErr == nil && secretFile.ClientSecret != "" {
-				m.ClientCredentialsMetadata.ClientSecret = secretFile.ClientSecret
-			} else {
-				m.ClientCredentialsMetadata.ClientSecret = content
-			}
-		} else {
-			m.ClientCredentialsMetadata.ClientSecret = content
-		}
+	// Resolve credentials from file if ClientSecretPath is set
+	if err := m.ClientCredentialsMetadata.ResolveCredentials(); err != nil {
+		return nil, err
 	}
 
 	return &m, nil
@@ -258,17 +240,8 @@ func (p *Pulsar) Init(ctx context.Context, metadata pubsub.Metadata) error {
 	case len(m.Token) > 0:
 		options.Authentication = pulsar.NewAuthenticationToken(m.Token)
 	case len(m.ClientCredentialsMetadata.TokenURL) > 0:
-		credsOpts := oauth2.ClientCredentialsOptions{
-			Logger:       p.logger,
-			TokenURL:     m.ClientCredentialsMetadata.TokenURL,
-			CAPEM:        []byte(m.ClientCredentialsMetadata.TokenCAPEM),
-			ClientID:     m.ClientCredentialsMetadata.ClientID,
-			ClientSecret: m.ClientCredentialsMetadata.ClientSecret,
-			Scopes:       m.ClientCredentialsMetadata.Scopes,
-			Audiences:    m.ClientCredentialsMetadata.Audiences,
-		}
-		var cliCreds *oauth2.ClientCredentials
-		cliCreds, err = oauth2.NewClientCredentials(ctx, credsOpts)
+		credsOpts := m.ClientCredentialsMetadata.ToOptions(p.logger)
+		cliCreds, err := oauth2.NewClientCredentials(ctx, credsOpts)
 		if err != nil {
 			return fmt.Errorf("could not instantiate oauth2 token provider: %w", err)
 		}
