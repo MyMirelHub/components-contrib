@@ -1066,6 +1066,7 @@ func TestInitUsesTokenSupplierWithEmptySecretFile(t *testing.T) {
 func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 	server := newOAuthTestServer(t)
 	// Test the new format with type, client_id, client_secret, and issuer_url
+	//nolint:gosec
 	credentialsJSON := `{
 		"type": "client_credentials",
 		"client_id": "d9ZyX97q1ef8Cr81WHVC4hFQ64vSlDK3",
@@ -1146,6 +1147,7 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testi
 
 func TestInitFailsWhenClientCredentialsTypeMissingClientID(t *testing.T) {
 	// Test that client_credentials type requires client_id
+	//nolint:gosec
 	credentialsJSON := `{
 		"type": "client_credentials",
 		"client_secret": "test-secret"
@@ -1165,6 +1167,7 @@ func TestInitFailsWhenClientCredentialsTypeMissingClientID(t *testing.T) {
 
 func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
 	// Test that client_credentials type requires client_secret
+	//nolint:gosec
 	credentialsJSON := `{
 		"type": "client_credentials",
 		"client_id": "test-id"

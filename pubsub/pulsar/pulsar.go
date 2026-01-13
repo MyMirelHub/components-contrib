@@ -241,7 +241,8 @@ func (p *Pulsar) Init(ctx context.Context, metadata pubsub.Metadata) error {
 		options.Authentication = pulsar.NewAuthenticationToken(m.Token)
 	case len(m.ClientCredentialsMetadata.TokenURL) > 0:
 		credsOpts := m.ClientCredentialsMetadata.ToOptions(p.logger)
-		cliCreds, err := oauth2.NewClientCredentials(ctx, credsOpts)
+		var cliCreds *oauth2.ClientCredentials
+		cliCreds, err = oauth2.NewClientCredentials(ctx, credsOpts)
 		if err != nil {
 			return fmt.Errorf("could not instantiate oauth2 token provider: %w", err)
 		}

@@ -101,10 +101,10 @@ func LoadCredentialsFromFile(filePath string) (clientID, clientSecret string, er
 		if jsonErr := json.Unmarshal([]byte(content), &credentialsFile); jsonErr == nil {
 			if credentialsFile.Type == "client_credentials" {
 				if credentialsFile.ClientID == "" {
-					return "", "", fmt.Errorf("client_id is required in credentials file when type is client_credentials")
+					return "", "", errors.New("client_id is required in credentials file when type is client_credentials")
 				}
 				if credentialsFile.ClientSecret == "" {
-					return "", "", fmt.Errorf("client_secret is required in credentials file when type is client_credentials")
+					return "", "", errors.New("client_secret is required in credentials file when type is client_credentials")
 				}
 				return credentialsFile.ClientID, credentialsFile.ClientSecret, nil
 			} else if credentialsFile.ClientSecret != "" {
