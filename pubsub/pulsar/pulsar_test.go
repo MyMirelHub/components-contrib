@@ -14,7 +14,6 @@ limitations under the License.
 package pulsar
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1069,7 +1068,6 @@ func TestInitUsesTokenSupplierWithEmptySecretFile(t *testing.T) {
 func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 	server := newOAuthTestServer(t)
 	// Test oauth2CredentialsFile with JSON containing client_id and client_secret
-	//nolint:gosec
 	credentialsJSON := fmt.Sprintf(`{
 		"client_id": "d9ZyX97q1ef8Cr81WHVC4hFQ64vSlDK3",
 		"client_secret": "on1uJ...k6F6R",
@@ -1194,7 +1192,7 @@ func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
 		"oauth2Audiences":       "aud1",
 	}
 	p := NewPulsar(logger.NewLogger("test"))
-	err := p.Init(context.Background(), md)
+	err := p.Init(t.Context(), md)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "client_secret is required")

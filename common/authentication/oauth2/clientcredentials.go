@@ -112,35 +112,27 @@ type CredentialsFile struct {
 func LoadCredentialsFromJSONFile(filePath string) (clientID, clientSecret, issuerURL string, err error) {
 	secretBytes, readErr := os.ReadFile(filePath)
 	if readErr != nil {
-		err = fmt.Errorf("could not read oauth2 credentials from file %q: %w", filePath, readErr)
-		return
+		return "", "", "", fmt.Errorf("could not read oauth2 credentials from file %q: %w", filePath, readErr)
 	}
 
 	content := strings.TrimSpace(string(secretBytes))
 	var credentialsFile CredentialsFile
 	if jsonErr := json.Unmarshal([]byte(content), &credentialsFile); jsonErr != nil {
-		err = fmt.Errorf("failed to parse JSON credentials file: %w", jsonErr)
-		return
+		return "", "", "", fmt.Errorf("failed to parse JSON credentials file: %w", jsonErr)
 	}
 
 	// Validate required fields - client_id, client_secret, and issuer_url are required
 	if credentialsFile.ClientID == "" {
-		err = errors.New("client_id is required in credentials file")
-		return
+		return "", "", "", errors.New("client_id is required in credentials file")
 	}
 	if credentialsFile.ClientSecret == "" {
-		err = errors.New("client_secret is required in credentials file")
-		return
+		return "", "", "", errors.New("client_secret is required in credentials file")
 	}
 	if credentialsFile.IssuerURL == "" {
-		err = errors.New("issuer_url is required in credentials file")
-		return
+		return "", "", "", errors.New("issuer_url is required in credentials file")
 	}
 
-	clientID = credentialsFile.ClientID
-	clientSecret = credentialsFile.ClientSecret
-	issuerURL = credentialsFile.IssuerURL
-	return
+	return credentialsFile.ClientID, credentialsFile.ClientSecret, credentialsFile.IssuerURL, nil
 }
 
 type ClientCredentialsOptions struct {
