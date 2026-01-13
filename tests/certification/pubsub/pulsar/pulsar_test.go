@@ -162,9 +162,9 @@ func TestPulsar(t *testing.T) {
 
 		jsonCredsFile := filepath.Join(dir, "credentials.json")
 		jsonCreds := map[string]string{
-			"type":          "client_credentials",
 			"client_id":     "foo",
 			"client_secret": "bar",
+			"issuer_url":    "https://localhost:8085/issuer1/token",
 		}
 		jsonCredsBytes, err := json.Marshal(jsonCreds)
 		require.NoError(t, err)

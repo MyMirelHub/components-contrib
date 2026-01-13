@@ -126,27 +126,35 @@ func TestLoadCredentialsFromJSONFile(t *testing.T) {
 		expErr          bool
 		expErrContains  string
 	}{
-		"valid JSON with both fields": {
+		"valid JSON with all required fields": {
 			fileContent: `{
-				"type": "client_credentials",
 				"client_id": "test-id",
-				"client_secret": "test-secret"
+				"client_secret": "test-secret",
+				"issuer_url": "https://oauth.example.com/token"
 			}`,
 			expClientID:     "test-id",
 			expClientSecret: "test-secret",
 		},
+		"missing issuer_url": {
+			fileContent: `{
+				"client_id": "test-id",
+				"client_secret": "test-secret"
+			}`,
+			expErr:         true,
+			expErrContains: "issuer_url is required",
+		},
 		"missing client_id": {
 			fileContent: `{
-				"type": "client_credentials",
-				"client_secret": "test-secret"
+				"client_secret": "test-secret",
+				"issuer_url": "https://oauth.example.com/token"
 			}`,
 			expErr:         true,
 			expErrContains: "client_id is required",
 		},
 		"missing client_secret": {
 			fileContent: `{
-				"type": "client_credentials",
-				"client_id": "test-id"
+				"client_id": "test-id",
+				"issuer_url": "https://oauth.example.com/token"
 			}`,
 			expErr:         true,
 			expErrContains: "client_secret is required",
@@ -168,7 +176,7 @@ func TestLoadCredentialsFromJSONFile(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tmpFile.Close())
 
-			clientID, clientSecret, err := LoadCredentialsFromJSONFile(tmpFile.Name())
+			clientID, clientSecret, issuerURL, err := LoadCredentialsFromJSONFile(tmpFile.Name())
 
 			if test.expErr {
 				require.Error(t, err)
@@ -179,12 +187,13 @@ func TestLoadCredentialsFromJSONFile(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, test.expClientID, clientID)
 				assert.Equal(t, test.expClientSecret, clientSecret)
+				assert.NotEmpty(t, issuerURL)
 			}
 		})
 	}
 
 	t.Run("file not found", func(t *testing.T) {
-		_, _, err := LoadCredentialsFromJSONFile("/nonexistent/file/path")
+		_, _, _, err := LoadCredentialsFromJSONFile("/nonexistent/file/path")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "could not read oauth2 credentials from file")
 	})
@@ -197,33 +206,72 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 		plainTextSecret     string // For oauth2ClientSecretPath (plain text secret only)
 		expClientID         string
 		expClientSecret     string
+		expTokenURL         string
 		expErr              bool
 		expErrContains      string
 	}{
-		"oauth2CredentialsFile overrides metadata": {
+		"oauth2CredentialsFile with metadata ClientID override": {
 			metadata: ClientCredentialsMetadata{
-				ClientID:     "metadata-id",
+				ClientID: "metadata-id",
+			},
+			credentialsFileJSON: `{
+				"client_id": "file-id",
+				"client_secret": "file-secret",
+				"issuer_url": "https://oauth.example.com/token"
+			}`,
+			expClientID:     "metadata-id",
+			expClientSecret: "file-secret",
+			expTokenURL:     "https://oauth.example.com/token",
+		},
+		"oauth2CredentialsFile with metadata ClientSecret override": {
+			metadata: ClientCredentialsMetadata{
 				ClientSecret: "metadata-secret",
 			},
 			credentialsFileJSON: `{
-				"type": "client_credentials",
 				"client_id": "file-id",
-				"client_secret": "file-secret"
+				"client_secret": "file-secret",
+				"issuer_url": "https://oauth.example.com/token"
+			}`,
+			expClientID:     "file-id",
+			expClientSecret: "metadata-secret",
+			expTokenURL:     "https://oauth.example.com/token",
+		},
+		"oauth2CredentialsFile provides issuer_url as TokenURL": {
+			metadata: ClientCredentialsMetadata{},
+			credentialsFileJSON: `{
+				"client_id": "file-id",
+				"client_secret": "file-secret",
+				"issuer_url": "https://oauth.example.com/o/oauth2/token"
 			}`,
 			expClientID:     "file-id",
 			expClientSecret: "file-secret",
+			expTokenURL:     "https://oauth.example.com/o/oauth2/token",
+		},
+		"oauth2CredentialsFile with metadata TokenURL override": {
+			metadata: ClientCredentialsMetadata{
+				TokenURL: "https://metadata.com/token",
+			},
+			credentialsFileJSON: `{
+				"client_id": "file-id",
+				"client_secret": "file-secret",
+				"issuer_url": "https://file.com/token"
+			}`,
+			expClientID:     "file-id",
+			expClientSecret: "file-secret",
+			expTokenURL:     "https://metadata.com/token",
 		},
 		"oauth2CredentialsFile provides credentials when metadata is empty": {
 			metadata: ClientCredentialsMetadata{},
 			credentialsFileJSON: `{
-				"type": "client_credentials",
 				"client_id": "file-only-id",
-				"client_secret": "file-only-secret"
+				"client_secret": "file-only-secret",
+				"issuer_url": "https://oauth.example.com/o/oauth2/token"
 			}`,
 			expClientID:     "file-only-id",
 			expClientSecret: "file-only-secret",
+			expTokenURL:     "https://oauth.example.com/o/oauth2/token",
 		},
-		"oauth2ClientSecretPath provides plain text secret": {
+		"oauth2ClientSecretPath provides plain text secret and allows client_id from metadata": {
 			metadata: ClientCredentialsMetadata{
 				ClientID: "metadata-id",
 			},
@@ -231,36 +279,21 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 			expClientID:     "metadata-id",
 			expClientSecret: "plain-text-secret-12345",
 		},
-		"error missing client_id in JSON": {
-			metadata: ClientCredentialsMetadata{},
-			credentialsFileJSON: `{
-				"type": "client_credentials",
-				"client_secret": "test-secret"
-			}`,
-			expErr:         true,
-			expErrContains: "client_id is required",
-		},
-		"error missing client_secret in JSON": {
-			metadata: ClientCredentialsMetadata{},
-			credentialsFileJSON: `{
-				"type": "client_credentials",
-				"client_id": "test-id"
-			}`,
-			expErr:         true,
-			expErrContains: "client_secret is required",
-		},
-		"error invalid JSON": {
-			metadata:            ClientCredentialsMetadata{},
-			credentialsFileJSON: "{ invalid json }",
-			expErr:              true,
-			expErrContains:      "failed to parse JSON",
+		"oauth2ClientSecretPath with metadata ClientSecret override": {
+			metadata: ClientCredentialsMetadata{
+				ClientID:     "metadata-id",
+				ClientSecret: "metadata-secret",
+			},
+			plainTextSecret: "plain-text-secret-12345",
+			expClientID:     "metadata-id",
+			expClientSecret: "metadata-secret",
 		},
 		"error both fields set": {
 			metadata: ClientCredentialsMetadata{},
 			credentialsFileJSON: `{
-				"type": "client_credentials",
 				"client_id": "test-id",
-				"client_secret": "test-secret"
+				"client_secret": "test-secret",
+				"issuer_url": "https://oauth.example.com/token"
 			}`,
 			plainTextSecret: "plain-text-secret",
 			expErr:          true,
@@ -307,6 +340,9 @@ func TestClientCredentialsMetadata_ResolveCredentials(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, test.expClientID, test.metadata.ClientID)
 				assert.Equal(t, test.expClientSecret, test.metadata.ClientSecret)
+				if test.expTokenURL != "" {
+					assert.Equal(t, test.expTokenURL, test.metadata.TokenURL)
+				}
 			}
 		})
 	}

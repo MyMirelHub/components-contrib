@@ -14,6 +14,7 @@ limitations under the License.
 package pulsar
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -965,11 +966,11 @@ func TestInitUsesTokenSupplierWithPlainTextSecretFile(t *testing.T) {
 
 func TestInitUsesTokenSupplierWithJSONSecretFile(t *testing.T) {
 	server := newOAuthTestServer(t)
-	credentialsPath := writeTempFile(t, `{
-		"type": "client_credentials",
+	credentialsPath := writeTempFile(t, fmt.Sprintf(`{
 		"client_id": "json-id-from-file",
-		"client_secret": "json-secret-from-file"
-	}`)
+		"client_secret": "json-secret-from-file",
+		"issuer_url": "%s"
+	}`, server.URL))
 
 	var capturedOpts pulsar.ClientOptions
 	p := NewPulsar(logger.NewLogger("test")).(*Pulsar)
@@ -984,8 +985,6 @@ func TestInitUsesTokenSupplierWithJSONSecretFile(t *testing.T) {
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
 		"host":                  "localhost:6650",
-		"oauth2TokenURL":        server.URL,
-		"oauth2ClientID":        "metadata-client-id", // Should be overridden by file
 		"oauth2CredentialsFile": credentialsPath,
 		"oauth2Scopes":          "scope1",
 		"oauth2Audiences":       "aud1",
@@ -1071,11 +1070,11 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 	server := newOAuthTestServer(t)
 	// Test oauth2CredentialsFile with JSON containing client_id and client_secret
 	//nolint:gosec
-	credentialsJSON := `{
-		"type": "client_credentials",
+	credentialsJSON := fmt.Sprintf(`{
 		"client_id": "d9ZyX97q1ef8Cr81WHVC4hFQ64vSlDK3",
-		"client_secret": "on1uJ...k6F6R"
-	}`
+		"client_secret": "on1uJ...k6F6R",
+		"issuer_url": "%s"
+	}`, server.URL)
 	credentialsPath := writeTempFile(t, credentialsJSON)
 
 	var capturedOpts pulsar.ClientOptions
@@ -1091,8 +1090,6 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
 		"host":                  "localhost:6650",
-		"oauth2TokenURL":        server.URL,
-		"oauth2ClientID":        "metadata-client-id", // Should be overridden by file
 		"oauth2CredentialsFile": credentialsPath,
 		"oauth2Scopes":          "scope1",
 		"oauth2Audiences":       "aud1",
@@ -1109,9 +1106,8 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFile(t *testing.T) {
 
 func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testing.T) {
 	server := newOAuthTestServer(t)
-	// Test that issuer_url in JSON file is ignored - TokenURL must be set explicitly
+	// Test that issuer_url in JSON file is used as TokenURL
 	credentialsJSON := fmt.Sprintf(`{
-		"type": "client_credentials",
 		"client_id": "test-client-id",
 		"client_secret": "test-client-secret",
 		"issuer_url": "%s"
@@ -1131,7 +1127,6 @@ func TestInitUsesTokenSupplierWithClientCredentialsJSONFileAndIssuerURL(t *testi
 	md := pubsub.Metadata{}
 	md.Properties = map[string]string{
 		"host":                  "localhost:6650",
-		"oauth2TokenURL":        server.URL + "/token",
 		"oauth2CredentialsFile": credentialsPath,
 		"oauth2Scopes":          "scope1",
 		"oauth2Audiences":       "aud1",
@@ -1183,11 +1178,11 @@ func TestInitUsesClientIDFromMetadataWhenFileHasOnlySecret(t *testing.T) {
 }
 
 func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
-	// Test that client_credentials type requires client_secret
+	// Test that credentials file requires client_secret
 	//nolint:gosec
 	credentialsJSON := `{
-		"type": "client_credentials",
-		"client_id": "test-id"
+		"client_id": "test-id",
+		"issuer_url": "https://oauth.example.com/token"
 	}`
 	secretPath := writeTempFile(t, credentialsJSON)
 
@@ -1195,8 +1190,11 @@ func TestInitFailsWhenClientCredentialsTypeMissingClientSecret(t *testing.T) {
 	md.Properties = map[string]string{
 		"host":                  "localhost:6650",
 		"oauth2CredentialsFile": secretPath,
+		"oauth2Scopes":          "scope1",
+		"oauth2Audiences":       "aud1",
 	}
-	_, err := parsePulsarMetadata(md)
+	p := NewPulsar(logger.NewLogger("test"))
+	err := p.Init(context.Background(), md)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "client_secret is required")

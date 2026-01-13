@@ -47,34 +47,41 @@ type ClientCredentialsMetadata struct {
 }
 
 // ResolveCredentials loads client_id and client_secret from files if configured.
-// oauth2CredentialsFile and oauth2ClientSecretPath are mutually exclusive.
 func (m *ClientCredentialsMetadata) ResolveCredentials() error {
 	if m.CredentialsFilePath != "" && m.ClientSecretPath != "" {
 		return errors.New("'oauth2CredentialsFile' and 'oauth2ClientSecretPath' fields are mutually exclusive")
 	}
 
-	// oauth2CredentialsFile: JSON file with both client_id and client_secret
+	// oauth2CredentialsFile: JSON file with client_id, client_secret, and issuer_url
 	if m.CredentialsFilePath != "" {
-		fileClientID, fileClientSecret, err := LoadCredentialsFromJSONFile(m.CredentialsFilePath)
+		fileClientID, fileClientSecret, fileIssuerURL, err := LoadCredentialsFromJSONFile(m.CredentialsFilePath)
 		if err != nil {
 			return fmt.Errorf("failed to load credentials from JSON file: %w", err)
 		}
-		if fileClientID != "" {
+
+		// Metadata overrides file values
+		if m.ClientID == "" {
 			m.ClientID = fileClientID
 		}
-		if fileClientSecret != "" {
+		if m.ClientSecret == "" {
 			m.ClientSecret = fileClientSecret
+		}
+		if m.TokenURL == "" {
+			m.TokenURL = fileIssuerURL
 		}
 		return nil
 	}
 
 	// oauth2ClientSecretPath: plain text file with just the secret
 	if m.ClientSecretPath != "" {
-		secretBytes, err := os.ReadFile(m.ClientSecretPath)
-		if err != nil {
-			return fmt.Errorf("could not read oauth2 client secret from file %q: %w", m.ClientSecretPath, err)
+		// Metadata overrides file value
+		if m.ClientSecret == "" {
+			secretBytes, err := os.ReadFile(m.ClientSecretPath)
+			if err != nil {
+				return fmt.Errorf("could not read oauth2 client secret from file %q: %w", m.ClientSecretPath, err)
+			}
+			m.ClientSecret = strings.TrimSpace(string(secretBytes))
 		}
-		m.ClientSecret = strings.TrimSpace(string(secretBytes))
 		return nil
 	}
 
@@ -96,33 +103,44 @@ func (m *ClientCredentialsMetadata) ToOptions(logger logger.Logger) ClientCreden
 
 // CredentialsFile represents a JSON credentials file.
 type CredentialsFile struct {
-	Type         string `json:"type"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+	IssuerURL    string `json:"issuer_url"`
 }
 
-// LoadCredentialsFromJSONFile reads client_id and client_secret from a JSON file.
-func LoadCredentialsFromJSONFile(filePath string) (clientID, clientSecret string, err error) {
+// LoadCredentialsFromJSONFile reads client_id, client_secret, and issuer_url from a JSON file.
+func LoadCredentialsFromJSONFile(filePath string) (clientID, clientSecret, issuerURL string, err error) {
 	secretBytes, readErr := os.ReadFile(filePath)
 	if readErr != nil {
-		return "", "", fmt.Errorf("could not read oauth2 credentials from file %q: %w", filePath, readErr)
+		err = fmt.Errorf("could not read oauth2 credentials from file %q: %w", filePath, readErr)
+		return
 	}
 
 	content := strings.TrimSpace(string(secretBytes))
 	var credentialsFile CredentialsFile
 	if jsonErr := json.Unmarshal([]byte(content), &credentialsFile); jsonErr != nil {
-		return "", "", fmt.Errorf("failed to parse JSON credentials file: %w", jsonErr)
+		err = fmt.Errorf("failed to parse JSON credentials file: %w", jsonErr)
+		return
 	}
 
-	// Validate required fields - both client_id and client_secret are required
+	// Validate required fields - client_id, client_secret, and issuer_url are required
 	if credentialsFile.ClientID == "" {
-		return "", "", errors.New("client_id is required in credentials file")
+		err = errors.New("client_id is required in credentials file")
+		return
 	}
 	if credentialsFile.ClientSecret == "" {
-		return "", "", errors.New("client_secret is required in credentials file")
+		err = errors.New("client_secret is required in credentials file")
+		return
+	}
+	if credentialsFile.IssuerURL == "" {
+		err = errors.New("issuer_url is required in credentials file")
+		return
 	}
 
-	return credentialsFile.ClientID, credentialsFile.ClientSecret, nil
+	clientID = credentialsFile.ClientID
+	clientSecret = credentialsFile.ClientSecret
+	issuerURL = credentialsFile.IssuerURL
+	return
 }
 
 type ClientCredentialsOptions struct {
