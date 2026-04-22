@@ -162,3 +162,70 @@ func TestParseRedisMetadata(t *testing.T) {
 		assert.EqualValues(t, -1, m.RedisMinRetryInterval)
 	})
 }
+
+func TestApplyConnectionReliabilityDefaults(t *testing.T) {
+	t.Run("failover enables sentinel switch refresh and health check defaults", func(t *testing.T) {
+		settings := &Settings{Failover: true}
+		applyConnectionReliabilityDefaults(settings, map[string]string{})
+
+		assert.True(t, settings.RefreshPoolOnSentinelSwitch)
+		assert.True(t, settings.ValidateConnectionBeforeUse)
+		assert.Equal(t, 2*time.Second, time.Duration(settings.ConnectionHealthCheckInterval))
+	})
+
+	t.Run("non failover keeps validate disabled by default", func(t *testing.T) {
+		settings := &Settings{Failover: false}
+		applyConnectionReliabilityDefaults(settings, map[string]string{})
+
+		assert.False(t, settings.ValidateConnectionBeforeUse)
+		assert.Equal(t, time.Duration(0), time.Duration(settings.ConnectionHealthCheckInterval))
+	})
+
+	t.Run("explicit health check interval enables validate", func(t *testing.T) {
+		settings := &Settings{
+			Failover:                      false,
+			ConnectionHealthCheckInterval: Duration(5 * time.Second),
+		}
+		applyConnectionReliabilityDefaults(settings, map[string]string{"connectionHealthCheckInterval": "5s"})
+
+		assert.True(t, settings.ValidateConnectionBeforeUse)
+		assert.Equal(t, 5*time.Second, time.Duration(settings.ConnectionHealthCheckInterval))
+	})
+
+	t.Run("explicitly disabling validate in failover is respected", func(t *testing.T) {
+		settings := &Settings{Failover: true, ValidateConnectionBeforeUse: false}
+		applyConnectionReliabilityDefaults(settings, map[string]string{"validateConnectionBeforeUse": "false"})
+
+		assert.False(t, settings.ValidateConnectionBeforeUse)
+		assert.Equal(t, time.Duration(0), time.Duration(settings.ConnectionHealthCheckInterval))
+	})
+
+	t.Run("explicit validate false is not overridden by interval", func(t *testing.T) {
+		settings := &Settings{
+			Failover:                      true,
+			ValidateConnectionBeforeUse:   false,
+			ConnectionHealthCheckInterval: Duration(5 * time.Second),
+		}
+		applyConnectionReliabilityDefaults(settings, map[string]string{
+			"validateConnectionBeforeUse":   "false",
+			"connectionHealthCheckInterval": "5s",
+		})
+
+		assert.False(t, settings.ValidateConnectionBeforeUse)
+		assert.Equal(t, 5*time.Second, time.Duration(settings.ConnectionHealthCheckInterval))
+	})
+
+	t.Run("explicit zero health check interval is respected", func(t *testing.T) {
+		settings := &Settings{
+			Failover:                    true,
+			ValidateConnectionBeforeUse: true,
+		}
+		applyConnectionReliabilityDefaults(settings, map[string]string{
+			"validateConnectionBeforeUse":   "true",
+			"connectionHealthCheckInterval": "0s",
+		})
+
+		assert.True(t, settings.ValidateConnectionBeforeUse)
+		assert.Equal(t, time.Duration(0), time.Duration(settings.ConnectionHealthCheckInterval))
+	})
+}

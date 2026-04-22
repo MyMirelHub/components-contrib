@@ -1,0 +1,80 @@
+services:
+  pulsar:
+    image: apachepulsar/pulsar:4.2.0
+    # 4.2.0 is multi-arch (amd64 + arm64), so on Apple Silicon this runs natively.
+    environment:
+      - BOOKIE_MEM=-Xms768m -Xmx768m -XX:MaxDirectMemorySize=1g
+    command: >
+      /bin/bash -c
+      "bin/apply-config-from-env.py conf/standalone.conf
+      && bin/pulsar standalone --advertised-address pulsar"
+    # No healthcheck: avoid blocking startup while Pulsar standalone initializes.
+
+  app:
+    build:
+      context: ./app
+    environment:
+      - APP_MAX_CONCURRENCY=${APP_MAX_CONCURRENCY:-1}
+      - APP_BUSY_STRATEGY=${APP_BUSY_STRATEGY:-immediate429}
+      - APP_WORK_DURATION=${APP_WORK_DURATION:-2s}
+      - APP_INTERNAL_MAX_RETRIES=${APP_INTERNAL_MAX_RETRIES:-20}
+      - APP_INTERNAL_RETRY_DELAY=${APP_INTERNAL_RETRY_DELAY:-200ms}
+      - APP_SLEEP_AFTER_EXHAUST=${APP_SLEEP_AFTER_EXHAUST:-false}
+      - APP_SLEEP_DURATION=${APP_SLEEP_DURATION:-30s}
+    # Native arch: forcing amd64 under QEMU breaks `go build` on Apple Silicon.
+    depends_on:
+      - pulsar
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  daprd:
+    image: daprio/daprd:1.17.5
+    command:
+      - "./daprd"
+      - "--app-id"
+      - "retry-app"
+      - "--app-port"
+      - "8080"
+      - "--app-channel-address"
+      - "app"
+      - "--resources-path"
+      - "/components"
+      - "--dapr-http-port"
+      - "3500"
+      - "--log-level"
+      - "debug"
+    depends_on:
+      app:
+        condition: service_healthy
+      pulsar:
+        condition: service_started
+    volumes:
+      - ./components:/components:ro
+    ports:
+      - "3501:3500"
+
+  loadgen:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      - daprd
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "set -e;
+      echo 'waiting for Pulsar + daprd (standalone is slow under QEMU)...';
+      sleep 120;
+      for i in $$(seq 1 180); do
+        if curl -sf http://daprd:3500/v1.0/healthz >/dev/null 2>&1; then break; fi;
+        sleep 2;
+      done;
+      sleep 15;
+      i=1;
+      while [ $$i -le 200 ]; do
+        curl -sS -X POST http://daprd:3500/v1.0/publish/messagebus/storm-topic -H 'Content-Type: application/json' -d '{\"id\":'\"$$i\"',\"payload\":\"x\"}' >/dev/null || true;
+        i=$$((i+1));
+        sleep 0.03;
+      done;
+      echo loadgen_done"

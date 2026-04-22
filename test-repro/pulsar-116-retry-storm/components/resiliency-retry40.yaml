@@ -1,0 +1,22 @@
+apiVersion: dapr.io/v1alpha1
+kind: Resiliency
+metadata:
+  name: retry-storm-resiliency
+scopes:
+  - retry-app
+spec:
+  policies:
+    timeouts:
+      DefaultTimeoutPolicy: 60s
+    retries:
+      Retry40:
+        policy: exponential
+        duration: 1s
+        maxInterval: 40s
+        maxRetries: 40
+  targets:
+    components:
+      messagebus:
+        inbound:
+          timeout: DefaultTimeoutPolicy
+          retry: Retry40

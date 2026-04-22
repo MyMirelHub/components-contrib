@@ -51,6 +51,19 @@ type v9Client struct {
 	dialTimeout  Duration
 }
 
+func v9OnConnectHealthCheck(s *Settings) func(ctx context.Context, cn *v9.Conn) error {
+	timeout := time.Duration(s.DialTimeout)
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+
+	return func(ctx context.Context, cn *v9.Conn) error {
+		hcCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return cn.Ping(hcCtx).Err()
+	}
+}
+
 func (c v9Client) GetDel(ctx context.Context, key string) (string, error) {
 	return c.client.GetDel(ctx, key).Result()
 }
@@ -292,7 +305,10 @@ func (c v9Client) XClaimResult(ctx context.Context, stream string, group string,
 	// convert res to []RedisXMessage
 	redisXMessages := make([]RedisXMessage, len(res))
 	for i, xMessage := range res {
-		redisXMessages[i] = RedisXMessage(xMessage)
+		redisXMessages[i] = RedisXMessage{
+			ID:     xMessage.ID,
+			Values: xMessage.Values,
+		}
 	}
 
 	return redisXMessages, nil
@@ -345,7 +361,9 @@ func newV9FailoverClient(s *Settings) (RedisClient, error) {
 		ConnMaxLifetime:       time.Duration(s.MaxConnAge),
 		MinIdleConns:          s.MinIdleConns,
 		PoolTimeout:           time.Duration(s.PoolTimeout),
+		PoolFIFO:              true,
 		ConnMaxIdleTime:       time.Duration(s.IdleTimeout),
+		OnConnect:             v9OnConnectHealthCheck(s),
 		ContextTimeoutEnabled: true,
 	}
 
@@ -404,7 +422,9 @@ func newV9Client(s *Settings) (RedisClient, error) {
 			ConnMaxLifetime:       time.Duration(s.MaxConnAge),
 			MinIdleConns:          s.MinIdleConns,
 			PoolTimeout:           time.Duration(s.PoolTimeout),
+			PoolFIFO:              true,
 			ConnMaxIdleTime:       time.Duration(s.IdleTimeout),
+			OnConnect:             v9OnConnectHealthCheck(s),
 			ContextTimeoutEnabled: true,
 		}
 		/* #nosec */
@@ -444,7 +464,9 @@ func newV9Client(s *Settings) (RedisClient, error) {
 		ConnMaxLifetime:       time.Duration(s.MaxConnAge),
 		MinIdleConns:          s.MinIdleConns,
 		PoolTimeout:           time.Duration(s.PoolTimeout),
+		PoolFIFO:              true,
 		ConnMaxIdleTime:       time.Duration(s.IdleTimeout),
+		OnConnect:             v9OnConnectHealthCheck(s),
 		ContextTimeoutEnabled: true,
 	}
 

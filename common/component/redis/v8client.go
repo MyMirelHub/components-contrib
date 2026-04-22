@@ -51,6 +51,19 @@ type v8Client struct {
 	dialTimeout  Duration
 }
 
+func v8OnConnectHealthCheck(s *Settings) func(ctx context.Context, cn *v8.Conn) error {
+	timeout := time.Duration(s.DialTimeout)
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+
+	return func(ctx context.Context, cn *v8.Conn) error {
+		hcCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return cn.Ping(hcCtx).Err()
+	}
+}
+
 func (c v8Client) GetDel(ctx context.Context, key string) (string, error) {
 	return c.client.GetDel(ctx, key).Result()
 }
@@ -345,8 +358,10 @@ func newV8FailoverClient(s *Settings) (RedisClient, error) {
 		MaxConnAge:         time.Duration(s.MaxConnAge),
 		MinIdleConns:       s.MinIdleConns,
 		PoolTimeout:        time.Duration(s.PoolTimeout),
+		PoolFIFO:           true,
 		IdleCheckFrequency: time.Duration(s.IdleCheckFrequency),
 		IdleTimeout:        time.Duration(s.IdleTimeout),
+		OnConnect:          v8OnConnectHealthCheck(s),
 	}
 
 	if s.EnableTLS {
@@ -402,8 +417,10 @@ func newV8Client(s *Settings) (RedisClient, error) {
 			MaxConnAge:         time.Duration(s.MaxConnAge),
 			MinIdleConns:       s.MinIdleConns,
 			PoolTimeout:        time.Duration(s.PoolTimeout),
+			PoolFIFO:           true,
 			IdleCheckFrequency: time.Duration(s.IdleCheckFrequency),
 			IdleTimeout:        time.Duration(s.IdleTimeout),
+			OnConnect:          v8OnConnectHealthCheck(s),
 		}
 		/* #nosec */
 		if s.EnableTLS {
@@ -441,8 +458,10 @@ func newV8Client(s *Settings) (RedisClient, error) {
 		MaxConnAge:         time.Duration(s.MaxConnAge),
 		MinIdleConns:       s.MinIdleConns,
 		PoolTimeout:        time.Duration(s.PoolTimeout),
+		PoolFIFO:           true,
 		IdleCheckFrequency: time.Duration(s.IdleCheckFrequency),
 		IdleTimeout:        time.Duration(s.IdleTimeout),
+		OnConnect:          v8OnConnectHealthCheck(s),
 	}
 
 	/* #nosec */

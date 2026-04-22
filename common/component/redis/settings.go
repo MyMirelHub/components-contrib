@@ -85,6 +85,21 @@ type Settings struct {
 	SentinelMasterName string `mapstructure:"sentinelMasterName"`
 	// Use Redis Sentinel for automatic failover.
 	Failover bool `mapstructure:"failover"`
+	// RefreshPoolOnSentinelSwitch recreates the underlying Redis client when Sentinel
+	// emits a +switch-master event for the configured master.
+	RefreshPoolOnSentinelSwitch bool `mapstructure:"refreshPoolOnSentinelSwitch"`
+	// PoolRefreshInterval recreates the underlying Redis client at a fixed interval.
+	// Useful in non-Sentinel deployments to proactively rotate pooled connections.
+	// Set to 0 to disable periodic refresh.
+	PoolRefreshInterval Duration `mapstructure:"poolRefreshInterval"`
+	// ValidateConnectionBeforeUse performs a Redis PING before command execution.
+	// If the health check fails, the pool is refreshed before running the command.
+	// This avoids sending user commands on stale pooled sockets.
+	ValidateConnectionBeforeUse bool `mapstructure:"validateConnectionBeforeUse"`
+	// ConnectionHealthCheckInterval controls how often pre-command health checks
+	// are executed when ValidateConnectionBeforeUse is enabled.
+	// A value of 0 defaults to a conservative interval in ParseClientFromProperties.
+	ConnectionHealthCheckInterval Duration `mapstructure:"connectionHealthCheckInterval"`
 
 	// A flag to enable TLS for the Redis connection
 	EnableTLS bool `mapstructure:"enableTLS"`

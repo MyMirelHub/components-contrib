@@ -144,6 +144,7 @@ func ParseClientFromProperties(properties map[string]string, componentType metad
 	if err != nil {
 		return nil, nil, fmt.Errorf("redis client configuration error: %w", err)
 	}
+	applyConnectionReliabilityDefaults(&settings, properties)
 
 	switch componentType {
 	case metadata.PubSubType:
@@ -211,12 +212,46 @@ func ParseClientFromProperties(properties map[string]string, componentType metad
 		return nil, nil, fmt.Errorf("redis client configuration error: %w", err)
 	}
 
+	if (settings.Failover && settings.RefreshPoolOnSentinelSwitch) || settings.PoolRefreshInterval > 0 || settings.ValidateConnectionBeforeUse {
+		c = newPoolRefreshingClient(c, func() (RedisClient, error) {
+			return newClientFunc(&settings)
+		}, logger, settings.ValidateConnectionBeforeUse, time.Duration(settings.ConnectionHealthCheckInterval))
+		if prc, ok := c.(*poolRefreshingClient); ok {
+			prc.startMonitors(useNewClient, &settings)
+		}
+	}
+
 	// start the token refresh goroutine
 
 	if settings.UseEntraID {
 		StartEntraIDTokenRefreshBackgroundRoutine(c, settings.Username, *tokenExpires, tokenCredential, logger)
 	}
 	return c, &settings, nil
+}
+
+func applyConnectionReliabilityDefaults(settings *Settings, properties map[string]string) {
+	explicitRefreshOnSwitch := strings.TrimSpace(properties["refreshPoolOnSentinelSwitch"]) != ""
+	explicitValidateBeforeUse := strings.TrimSpace(properties["validateConnectionBeforeUse"]) != ""
+	explicitHealthCheckInterval := strings.TrimSpace(properties["connectionHealthCheckInterval"]) != ""
+
+	if settings.Failover && !explicitRefreshOnSwitch {
+		settings.RefreshPoolOnSentinelSwitch = true
+	}
+
+	// Follow common client conventions:
+	// - In Sentinel/failover mode, enable connection health checks by default.
+	// - Outside failover mode, require explicit opt-in (validateConnectionBeforeUse or connectionHealthCheckInterval).
+	if settings.Failover && !explicitValidateBeforeUse && !explicitHealthCheckInterval {
+		settings.ValidateConnectionBeforeUse = true
+	}
+
+	if settings.ConnectionHealthCheckInterval > 0 && !explicitValidateBeforeUse {
+		settings.ValidateConnectionBeforeUse = true
+	}
+
+	if settings.ValidateConnectionBeforeUse && settings.ConnectionHealthCheckInterval == 0 && !explicitHealthCheckInterval {
+		settings.ConnectionHealthCheckInterval = Duration(2 * time.Second)
+	}
 }
 
 func StartEntraIDTokenRefreshBackgroundRoutine(client RedisClient, username string, nextExpiration time.Time, cred *azcore.TokenCredential, logger *kitlogger.Logger) {
@@ -335,6 +370,7 @@ func (s *Settings) GetEntraIDCredentialAndSetInitialTokenAsPassword(ctx context.
 	return &token.ExpiresOn, &cred, nil
 }
 
+// IsZombieConnectionError returns true if the error indicates a stale or broken TCP connection.
 func ClientHasJSONSupport(c RedisClient) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

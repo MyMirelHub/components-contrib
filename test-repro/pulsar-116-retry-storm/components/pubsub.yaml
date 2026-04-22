@@ -1,0 +1,27 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: messagebus
+spec:
+  type: pubsub.pulsar
+  version: v1
+  metadata:
+    - name: host
+      value: "pulsar://pulsar:6650"
+    - name: consumerID
+      value: "retry-storm-consumer"
+    - name: persistent
+      value: "true"
+    - name: disableBatching
+      value: "true"
+    - name: maxConcurrentHandlers
+      value: "1"
+    - name: receiverQueueSize
+      value: "100"
+    # Match customer logs: "Error async processing message ... RETRY status returned from app"
+    - name: processMode
+      value: "async"
+    - name: subscribeType
+      value: "shared"
+    - name: redeliveryDelay
+      value: "30s"
